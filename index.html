@@ -294,23 +294,34 @@ const QR = (() => {
         return len;
     }
 
-    function canEncode(text, mode, ver) {
+    function canEncode(text, mode, ver, eccIdx) {
+        const spec = ECC_SPEC[ver][eccIdx];
+        const totalData = spec[0] * spec[1] + (spec[2] || 0) * (spec[3] || 0);
+        const capBytes = totalData;
+
+        // Data bits needed: mode(4) + charCount(varies) + data
+        const ccBits = ver <= 9 ? [10,9,8] : ver <= 26 ? [12,11,16] : [14,13,16];
+        const ccLen = ccBits[Math.log2(mode)];
+        const headerBits = 4 + ccLen;
+
+        let dataBits;
         if (mode === MODE_NUM) {
-            const max = [41, 77, 127, 187, 255, 322, 370, 461, 552, 652, 772, 883, 1022, 1101, 1250, 1408, 1548, 1725, 1903, 2061, 2232, 2409, 2620, 2812, 3057, 3283, 3517, 3669, 3909, 4158, 4417, 4686, 4965, 5253, 5529, 5836, 6143, 6470, 6803, 7099][ver - 1];
-            return text.length <= max;
+            dataBits = Math.floor(text.length / 3) * 10 + [0, 0, 4, 7][text.length % 3];
+        } else if (mode === MODE_ALPHA) {
+            dataBits = Math.floor(text.length / 2) * 11 + (text.length % 2 ? 6 : 0);
+        } else {
+            dataBits = getNumByteCount(text) * 8;
         }
-        if (mode === MODE_ALPHA) {
-            const max = [25, 47, 77, 114, 154, 195, 224, 279, 335, 395, 468, 535, 619, 667, 758, 854, 938, 1046, 1153, 1249, 1352, 1460, 1588, 1704, 1853, 1990, 2132, 2223, 2369, 2520, 2677, 2840, 3009, 3183, 3351, 3537, 3722, 3922, 4126, 4306][ver - 1];
-            return text.length <= max;
-        }
-        const max = [17, 32, 53, 78, 106, 134, 154, 192, 230, 271, 321, 367, 425, 458, 520, 586, 644, 718, 792, 858, 929, 1003, 1091, 1171, 1273, 1367, 1465, 1528, 1628, 1732, 1840, 1952, 2068, 2188, 2303, 2431, 2563, 2699, 2809, 2953][ver - 1];
-        return getNumByteCount(text) <= max;
+
+        const totalBits = headerBits + dataBits;
+        return Math.ceil(totalBits / 8) <= capBytes;
     }
 
     function chooseVersion(text, ecc) {
         const mode = getMode(text);
+        const ecIdx = ECC_RS[ecc];
         for (let v = 1; v <= 40; v++)
-            if (canEncode(text, mode, v)) return v;
+            if (canEncode(text, mode, v, ecIdx)) return v;
         throw new Error('Text too long');
     }
 
@@ -390,19 +401,31 @@ const QR = (() => {
     function interleaveEC(data, ver, ecc) {
         const ecIdx = ECC_RS[ecc];
         const spec = ECC_SPEC[ver][ecIdx];
-        const ecPer = [10,16,22,28][ecIdx];
+        // EC codewords per block = total - data per block.
+        // Block group 1: total1 = spec[1], ecPer = (total1 - data1) for that group
+        // But within a version, all blocks share the same EC count.
+        // We compute it from the first block group: total codewords per block minus data codewords.
+        // The actual EC count varies by version: [7,10,13,17],[10,16,22,28],[15,26,18,22], etc.
+        // Use pre-computed table indexed by (ecIdx, ver)
+        const ecPer = [
+            [7,10,15,20,26,18,20,24,30,18,20,24,26,30,22,24,24,28,30,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28],
+            [10,16,26,18,24,16,18,22,22,26,30,28,28,28,28,28,28,28,28,26,26,26,26,26,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28],
+            [13,22,18,26,18,24,18,22,20,30,28,26,26,28,30,28,28,30,28,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30],
+            [17,28,22,16,22,28,26,24,28,24,24,28,26,24,28,30,28,28,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30],
+        ];
+        const ecPerBlock = ecPer[ecIdx][ver - 1];
         const n1 = spec[0], d1 = spec[1], n2 = spec[2] || 0, d2 = spec[3] || 0;
 
         const blocks = [];
         let off = 0;
         for (let i = 0; i < n1; i++) {
             const b = data.slice(off, off + d1);
-            blocks.push({ data: b, ec: rsEncode(b, ecPer) });
+            blocks.push({ data: b, ec: rsEncode(b, ecPerBlock) });
             off += d1;
         }
         for (let i = 0; i < n2; i++) {
             const b = data.slice(off, off + d2);
-            blocks.push({ data: b, ec: rsEncode(b, ecPer) });
+            blocks.push({ data: b, ec: rsEncode(b, ecPerBlock) });
             off += d2;
         }
 
@@ -411,7 +434,7 @@ const QR = (() => {
         for (let i = 0; i < maxData; i++)
             for (const b of blocks)
                 if (i < b.data.length) res.push(b.data[i]);
-        for (let i = 0; i < ecPer; i++)
+        for (let i = 0; i < ecPerBlock; i++)
             for (const b of blocks)
                 res.push(b.ec[i]);
         return new Uint8Array(res);
@@ -450,7 +473,7 @@ const QR = (() => {
                 if (rr < 0 || rr >= N || cc < 0 || cc >= N) continue;
                 const inner = r >= 2 && r <= 4 && c >= 2 && c <= 4;
                 const outer = (r === 0 || r === 6) && c >= 0 && c <= 6;
-                const edge = c === 0 || c === 6 && r >= 0 && r <= 6;
+                const edge = (c === 0 || c === 6) && r >= 0 && r <= 6;
                 set(rr, cc, inner || outer || edge ? 1 : -1);
             }
         };
@@ -476,11 +499,15 @@ const QR = (() => {
                 set(r + dr, c + dc, Math.abs(dr) === 2 || Math.abs(dc) === 2 || (dr === 0 && dc === 0) ? 1 : -1);
         }
 
-        // Reserve format areas
-        for (let c = 0; c <= 8; c++) if (c !== 6) { rsv[8][c] = 1; }
-        for (let r = 0; r <= 7; r++) { rsv[r][8] = 1; }
-        for (let r = N - 8; r < N; r++) { rsv[r][8] = 1; }
-        for (let c = N - 8; c < N; c++) { rsv[8][c] = 1; }
+        // Reserve format areas (row 8 and col 8 of finder patterns)
+        // Horizontal: row 8, cols 0-8 (skip col 6 = timing)
+        for (let c = 0; c <= 8; c++) if (c !== 6) rsv[8][c] = 1;
+        // Vertical: col 8, rows 0-7
+        for (let r = 0; r <= 7; r++) rsv[r][8] = 1;
+        // Bottom-left: col 8, rows N-8 to N-1
+        for (let r = N - 8; r < N; r++) rsv[r][8] = 1;
+        // Top-right: row 8, cols N-8 to N-1
+        for (let c = N - 8; c < N; c++) rsv[8][c] = 1;
 
         // Version info (ver >= 7)
         if (ver >= 7) {
