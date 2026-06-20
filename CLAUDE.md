@@ -39,6 +39,23 @@ start index.html          # Windows
 open index.html           # macOS
 ```
 
+## Build / Minify
+
+```bash
+python minify.py                      # index.html → index.min.html
+python minify.py index.html out.html  # custom output
+```
+
+The minifier (`minify.py`) strips comments, collapses whitespace, and shortens CSS/JS. `index.min.html` is the production-ready version (~40% smaller).
+
+## File Structure
+
+- `index.html` — development source (readable, commented)
+- `index.min.html` — minified production version
+- `minify.py` — build script
+- `CLAUDE.md` — Claude Code guidance
+- `README.md` — user-facing documentation
+
 ## Known Issues / Gotchas
 
 - The `set` helper (~line 458) silently skips cells already reserved — this is relied upon for correct layering order.

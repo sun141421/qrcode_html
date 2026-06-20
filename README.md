@@ -29,6 +29,23 @@ open index.html
 
 无需任何构建步骤或服务端。
 
+也可打开压缩版 `index.min.html`，功能完全一致，体积小 40%。
+
+## 构建压缩版
+
+```bash
+python minify.py                    # index.html → index.min.html
+python minify.py index.html out.html  # 自定义输出
+```
+
+## 文件结构
+
+```
+index.html          ← 开发版（可读、带注释）
+index.min.html      ← 压缩生产版（~15 KB）
+minify.py           ← 构建脚本
+```
+
 ### 操作
 
 1. 输入任意文本、URL、数字等内容
